@@ -117,7 +117,7 @@ $(async () => {
     const { FFTR } = kissFFT;
     const BrowserFS = await import("@zenfs/core");
     const { IndexedDB } = await import("@zenfs/dom");
-    await BrowserFS.configure({
+    await BrowserFS.configureSingle({
         backend: IndexedDB,
         storeName: "FaustIDE" as any
     });
@@ -297,7 +297,9 @@ $(async () => {
             await initAudioCtx(audioEnv);
             initAnalysersUI(uiEnv, audioEnv);
         }
-        const { useWorklet, bufferSize, voices, args, fftDsp } = compileOptions;
+        const { useWorklet, bufferSize, voices, useDouble, fftDsp } = compileOptions;
+        const args = compileOptions.args.slice();
+        if (useDouble) args.push("-double");
         let node: FaustScriptProcessorNode<any> | FaustAudioWorkletNode<any>;
         // Recorder, show current recorded length without too many refreshes
         let mediaLengthRaf: number;
@@ -349,7 +351,7 @@ $(async () => {
             }
             if (!node) throw new Error("Unknown Error in WebAudio Node.");
             node.setPlotHandler(plotHandler);
-            node.listenSensors();
+            node.startSensors();
         } catch (e) { /*
             const uiWindow = ($("#iframe-faust-ui")[0] as HTMLIFrameElement).contentWindow;
             uiWindow.postMessage(JSON.stringify({ type: "clear" }), "*");
@@ -508,6 +510,7 @@ $(async () => {
     };
     const compileOptions: FaustEditorCompileOptions = {
         useWorklet: false,
+        useDouble: false,
         bufferSize: 1024,
         saveCode: true,
         saveParams: false,
@@ -665,6 +668,11 @@ $(async () => {
         if (compileOptions.realtimeCompile && audioEnv.dsp) runDsp(uiEnv.fileManager.mainCode);
     });
 
+    // Double
+    $<HTMLInputElement>("#check-double").on("change", (e) => {
+        compileOptions.useDouble = e.currentTarget.checked;
+        saveEditorParams();
+    })[0].checked = compileOptions.useDouble;
     // Save Code
     $<HTMLInputElement>("#check-save-code").on("change", (e) => {
         compileOptions.saveCode = e.currentTarget.checked;
@@ -732,7 +740,9 @@ $(async () => {
     $("#btn-plot").on("click", async () => {
         if (compileOptions.plotMode === "offline") {
             const code = uiEnv.fileManager.mainCode;
-            const { args, plot, plotSR } = compileOptions;
+            const { plot, plotSR, useDouble } = compileOptions;
+            const args = compileOptions.args.slice();
+            if (useDouble) args.push("-double");
             const generator = new FaustMonoDspGenerator();
             await generator.compile(faustCompiler, "main", code, args.join(" "));
             const soundfileList = generator.getSoundfileList();
@@ -993,9 +1003,11 @@ $(async () => {
                 $.ajax({
                     method: "GET",
                     url: `${path}/precompile`
-                }).done((result) => {
+                }).done((result, status, jqXHR) => {
                     if (result === "DONE") {
-                        const href = `${path}/${plat === "android" ? "binary.apk" : "binary.zip"}`;
+                        // faustservice MAY return Location : https://github.com/grame-cncm/faustservice/pull/10
+                        const location = jqXHR.getResponseHeader("Location");
+                        const href = location ? `${server}/${location}` : `${path}/${plat === "android" ? "binary.apk" : "binary.zip"}`;
                         $("#a-export-download").attr({ href });
                         $("#export-download").show();
                         if (download === true) {
@@ -1004,7 +1016,7 @@ $(async () => {
                         $("#qr-code").show();
                         QRCode.toCanvas(
                             $<HTMLCanvasElement>("#qr-code")[0],
-                            `${path}/${plat === "android" ? "binary.apk" : "binary.zip"}`
+                            href
                         );
                         return;
                     }
@@ -1624,9 +1636,11 @@ $(async () => {
                     $.ajax({
                         method: "GET",
                         url: `${path}/precompile`
-                    }).done((result) => {
+                    }).done((result, status, jqXHR) => {
                         if (result === "DONE") {
-                            const href = `${path}/binary.zip`;
+                            // faustservice MAY return Location : https://github.com/grame-cncm/faustservice/pull/10
+                            const location = jqXHR.getResponseHeader("Location");
+                            const href = location ? `${server}/${location}` : `${path}/binary.zip`;
                             ((e.originalEvent as MessageEvent).source as WindowProxy).postMessage({ type: "exported", href }, "*");
                         }
                     }).fail((jqXHR, textStatus) => {
